@@ -26,7 +26,6 @@
 # puts sub.exitstatus # returns:
 
 require 'subexec/version'
-require 'posix-spawn'
 
 class Subexec
 
@@ -53,75 +52,18 @@ class Subexec
   end
 
   def run!
-    if RUBY_VERSION >= '1.9'
-      spawn
-    else
-      exec
-    end
+    exec
   end
-
 
   private
 
-    def spawn
-      # TODO: weak implementation for log_file support.
-      # Ideally, the data would be piped through to both descriptors
-      r, w = IO.pipe
-      if !log_file.nil?
-        self.pid = POSIX::Spawn::spawn({'LANG' => self.lang}, command, [:out, :err] => [log_file, 'a'])
-      else
-        self.pid = POSIX::Spawn::spawn({'LANG' => self.lang}, command, STDERR=>w, STDOUT=>w)
-      end
-      w.close
-
-      @timer = Time.now + timeout
-      timed_out = false
-
-      waitpid = Proc.new do
-        begin
-          flags = (timeout > 0 ? Process::WUNTRACED|Process::WNOHANG : 0)
-          Process.waitpid(pid, flags)
-        rescue Errno::ECHILD
-          break
-        end
-      end
-
-      if timeout > 0
-        loop do
-          ret = waitpid.call
-
-          break if ret == pid
-          sleep 0.01
-          if Time.now > @timer
-            timed_out = true
-            break
-          end
-        end
-      else
-        waitpid.call
-      end
-
-      if timed_out
-        # The subprocess timed out -- kill it
-        Process.kill(9, pid) rescue Errno::ESRCH
-        self.exitstatus = nil
-      else
-        # The subprocess exited on its own
-        self.exitstatus = $?.exitstatus
-        self.output = r.readlines.join("")
-      end
-      r.close
-
-      self
+  def exec
+    if !(RUBY_PLATFORM =~ /win32|mswin|mingw/).nil?
+      self.output = `set LANG=#{lang} && #{command} 2>&1`
+    else
+      self.output = `LANG=#{lang} && export $LANG && #{command} 2>&1`
     end
-
-    def exec
-      if !(RUBY_PLATFORM =~ /win32|mswin|mingw/).nil?
-        self.output = `set LANG=#{lang} && #{command} 2>&1`
-      else
-        self.output = `LANG=#{lang} && export $LANG && #{command} 2>&1`
-      end
-      self.exitstatus = $?.exitstatus
-    end
+    self.exitstatus = $?.exitstatus
+  end
 
 end
